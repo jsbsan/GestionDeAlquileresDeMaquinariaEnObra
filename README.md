@@ -4,6 +4,7 @@ Sistema de gestión de maquinaria alquilada a terceros desarrollado como aplicac
 
 Permite controlar proveedores, maquinaria, alquileres, obras, documentación técnica y costes asociados, todo desde una única interfaz sin necesidad de instalar software adicional ni disponer de servidor.
 
+![texto alternativo](gestion.png)
 ---
 
 ## 📋 Características principales
@@ -52,6 +53,9 @@ Permite controlar proveedores, maquinaria, alquileres, obras, documentación té
   - Días de alquiler.
   - Coste acumulado.
   - Coste total final.
+    
+![texto alternativo](control.png)
+
 
 ### 📊 Auditoría mensual
 
@@ -61,6 +65,8 @@ Vista tipo calendario/Gantt que permite:
 - Identificar periodos de alquiler.
 - Calcular gasto mensual por equipo.
 - Analizar permanencias en obra.
+
+![texto alternativo](cronograma.png)
 
 ### 📁 Gestión documental
 
@@ -81,6 +87,9 @@ Cada máquina puede almacenar:
 - Manuales.
 
 Los documentos pueden visualizarse directamente dentro de la aplicación.
+
+![texto alternativo](editorEquipoFotosyPDF.png)
+
 
 ### 💾 Base de datos SQLite integrada
 
