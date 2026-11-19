@@ -1,0 +1,2282 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MaquiRent Pro - Gestión de Alquiler de Maquinaria</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts: Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- SQL.js (SQLite en WebAssembly) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#fffbeb',
+                            100: '#fef3c7',
+                            500: '#f59e0b',
+                            600: '#d97706',
+                            700: '#b45309',
+                            900: '#78350f',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans antialiased selection:bg-amber-200 selection:text-amber-900">
+
+    <!-- Notificación Toast (Reemplazo elegante de alert) -->
+    <div id="toast-container" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+    <!-- Navbar / Header -->
+    <header class="bg-slate-900 text-white shadow-md sticky top-0 z-30">
+        <div class="w-full px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center h-16">
+                <!-- Logo -->
+                <div class="flex items-center gap-3">
+                    <div class="bg-amber-500 p-2 rounded-lg text-slate-900">
+                        <i data-lucide="hard-hat" class="w-6 h-6"></i>
+                    </div>
+                    <div>
+                        <span class="font-bold text-xl tracking-tight">MaquiRent<span class="text-amber-500">Pro</span></span>
+                        <span class="hidden sm:inline-block text-xs text-slate-400 ml-2 border-l border-slate-700 pl-2">Control de Maquinaria Alquilada a Terceros</span>
+                        <span id="db-status-badge" class="inline-flex items-center gap-1.5 text-[11px] font-medium bg-slate-800 text-slate-300 px-2.5 py-0.5 rounded-full ml-2 border border-slate-700">
+                            <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span> Cargando SQLite...
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Botones de Acción Rápida -->
+                <div class="flex items-center gap-2 sm:gap-3">
+                    <button onclick="promptResetDatabase()" title="Borrar todos los registros y empezar desde cero" class="bg-slate-800 hover:bg-red-950 text-slate-300 hover:text-red-300 text-xs font-medium px-2.5 py-2 rounded-lg border border-slate-700 hover:border-red-800 transition flex items-center gap-1.5">
+                        <i data-lucide="rotate-ccw" class="w-4 h-4 text-red-400"></i>
+                        <span class="hidden xl:inline">Vaciar BD</span>
+                    </button>
+                    <button onclick="exportSQLiteFile()" title="Descargar base de datos .sqlite" class="bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium px-2.5 py-2 rounded-lg border border-slate-700 transition flex items-center gap-1.5">
+                        <i data-lucide="download" class="w-4 h-4 text-emerald-400"></i>
+                        <span class="hidden lg:inline">Exportar .SQLite</span>
+                    </button>
+                    <label title="Cargar archivo .sqlite" class="bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium px-2.5 py-2 rounded-lg border border-slate-700 transition flex items-center gap-1.5 cursor-pointer">
+                        <i data-lucide="upload" class="w-4 h-4 text-sky-400"></i>
+                        <span class="hidden lg:inline">Importar</span>
+                        <input type="file" accept=".sqlite,.db" onchange="importSQLiteFile(event)" class="hidden">
+                    </label>
+                    <button onclick="openModal('modal-provider')" class="bg-slate-800 hover:bg-slate-700 text-white text-xs sm:text-sm font-medium px-3 py-2 rounded-lg border border-slate-700 transition flex items-center gap-1.5">
+                        <i data-lucide="building-2" class="w-4 h-4 text-blue-400"></i>
+                        <span class="hidden md:inline">Nueva Empresa</span>
+                    </button>
+                    <button onclick="openModal('modal-machine')" class="bg-slate-800 hover:bg-slate-700 text-white text-xs sm:text-sm font-medium px-3 py-2 rounded-lg border border-slate-700 transition flex items-center gap-1.5">
+                        <i data-lucide="file-plus" class="w-4 h-4 text-amber-500"></i>
+                        <span>Registrar Equipo</span>
+                    </button>
+                    <button onclick="openModal('modal-rental')" class="bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs sm:text-sm font-semibold px-3 py-2 rounded-lg shadow-sm transition flex items-center gap-1.5">
+                        <i data-lucide="log-in" class="w-4 h-4"></i>
+                        <span>Nueva Entrada (Alquiler)</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="w-full px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+
+        <!-- KPIs / Resumen Rápido -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">En Obra (Alquiladas)</p>
+                    <p id="kpi-rented" class="text-2xl sm:text-3xl font-bold text-amber-600 mt-1">0</p>
+                </div>
+                <div class="p-3 bg-amber-50 rounded-xl text-amber-600">
+                    <i data-lucide="truck" class="w-6 h-6"></i>
+                </div>
+            </div>
+
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Proveedores Activos</p>
+                    <p id="kpi-providers" class="text-2xl sm:text-3xl font-bold text-slate-900 mt-1">0</p>
+                </div>
+                <div class="p-3 bg-slate-100 rounded-xl text-slate-600">
+                    <i data-lucide="building-2" class="w-6 h-6"></i>
+                </div>
+            </div>
+
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Ya Devueltas</p>
+                    <p id="kpi-returned" class="text-2xl sm:text-3xl font-bold text-emerald-600 mt-1">0</p>
+                </div>
+                <div class="p-3 bg-emerald-50 rounded-xl text-emerald-600">
+                    <i data-lucide="check-circle-2" class="w-6 h-6"></i>
+                </div>
+            </div>
+
+            <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-medium text-slate-500 uppercase tracking-wider">Coste Diario Actual</p>
+                    <p id="kpi-cost" class="text-2xl sm:text-3xl font-bold text-red-600 mt-1">0 €</p>
+                </div>
+                <div class="p-3 bg-red-50 rounded-xl text-red-600">
+                    <i data-lucide="trending-down" class="w-6 h-6"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- Navegación por Pestañas -->
+        <div class="border-b border-slate-200 mb-6 overflow-x-auto">
+            <nav class="flex space-x-6 min-w-max" aria-label="Tabs">
+                <button onclick="switchTab('fleet')" id="tab-fleet" class="tab-btn border-amber-500 text-amber-600 whitespace-nowrap py-3 px-1 border-b-2 font-semibold text-sm flex items-center gap-2 transition">
+                    <i data-lucide="layers" class="w-4 h-4"></i>
+                    Equipos y Fichas Técnicas
+                </button>
+                <button onclick="switchTab('rentals')" id="tab-rentals" class="tab-btn border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition">
+                    <i data-lucide="clipboard-list" class="w-4 h-4"></i>
+                    Control de Entradas y Devoluciones
+                </button>
+                <button onclick="switchTab('monthly')" id="tab-monthly" class="tab-btn border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition">
+                    <i data-lucide="calendar-days" class="w-4 h-4"></i>
+                    Auditoría Mensual de Alquileres
+                </button>
+                <button onclick="switchTab('providers')" id="tab-providers" class="tab-btn border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition">
+                    <i data-lucide="building-2" class="w-4 h-4"></i>
+                    Empresas Alquiladoras
+                </button>
+                <button onclick="switchTab('sites')" id="tab-sites" class="tab-btn border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm flex items-center gap-2 transition">
+                    <i data-lucide="map-pin" class="w-4 h-4"></i>
+                    Obras y Proyectos
+                </button>
+            </nav>
+        </div>
+
+        <!-- SECCIÓN 1: INVENTARIO DE MAQUINARIA ALQUILADA A TERCEROS -->
+        <section id="view-fleet" class="space-y-6">
+            <!-- Filtros y Búsqueda -->
+            <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row gap-4 justify-between items-center">
+                <div class="relative w-full sm:w-80">
+                    <i data-lucide="search" class="w-4 h-4 absolute left-3 top-3 text-slate-400"></i>
+                    <input type="text" id="search-machine" oninput="renderFleet()" placeholder="Buscar por ID, máquina o proveedor..." class="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500">
+                </div>
+                <div class="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                    <select id="filter-provider" onchange="renderFleet()" class="bg-slate-50 border border-slate-200 text-slate-700 text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-500">
+                        <option value="ALL">Todos los Proveedores</option>
+                    </select>
+                    <select id="filter-status" onchange="renderFleet()" class="bg-slate-50 border border-slate-200 text-slate-700 text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-500">
+                        <option value="ALL">Todos los Estados</option>
+                        <option value="RENTED">Alquiladas (En nuestro poder)</option>
+                        <option value="AVAILABLE">En Catálogo (Sin alquilar aún)</option>
+                        <option value="RETURNED">Devueltas a Proveedor</option>
+                        <option value="DECOMMISSIONED">Dadas de Baja</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Rejilla tipo Hoja de Cálculo de Máquinas -->
+            <div class="bg-white rounded-xl border border-slate-300 shadow-sm overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse text-xs sm:text-sm">
+                        <thead>
+                            <tr class="bg-slate-900 text-white text-[11px] uppercase tracking-wider font-semibold border-b border-slate-300 select-none">
+                                <th class="py-3 px-3 border-r border-slate-700 whitespace-nowrap">Matrícula / ID</th>
+                                <th class="py-3 px-3 border-r border-slate-700 whitespace-nowrap">Empresa de Alquiler</th>
+                                <th class="py-3 px-3 border-r border-slate-700 whitespace-nowrap">Maquinaria / Modelo</th>
+                                <th class="py-3 px-3 border-r border-slate-700 whitespace-nowrap">Nº Serie</th>
+                                <th class="py-3 px-3 border-r border-slate-700 whitespace-nowrap">Ficha Técnica</th>
+                                <th class="py-3 px-3 border-r border-slate-700 whitespace-nowrap">Obra Actual / Entrada</th>
+                                <th class="py-3 px-3 border-r border-slate-700 text-right whitespace-nowrap">Coste/Día</th>
+                                <th class="py-3 px-3 border-r border-slate-700 whitespace-nowrap">Fotos y PDFs</th>
+                                <th class="py-3 px-3 border-r border-slate-700 text-center whitespace-nowrap">Estado</th>
+                                <th class="py-3 px-3 text-right whitespace-nowrap">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="fleet-grid" class="divide-y divide-slate-200 bg-white">
+                            <!-- Se puebla dinámicamente con JS en formato rejilla -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECCIÓN 2: CONTROL DE ENTRADAS Y DEVOLUCIONES -->
+        <section id="view-rentals" class="hidden space-y-6">
+            <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <div class="p-4 sm:p-6 border-b border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                    <div>
+                        <h2 class="text-lg font-bold text-slate-900">Registro de Contratos con Proveedores</h2>
+                        <p class="text-sm text-slate-500">Control de fechas de entrada (recepción), devolución (salida), obra destino y coste acumulado.</p>
+                    </div>
+                    <select id="filter-rental-status" onchange="renderRentals()" class="bg-slate-50 border border-slate-200 text-slate-700 text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-500">
+                        <option value="ALL">Todos los registros</option>
+                        <option value="ACTIVE">Activos (En obra generando coste)</option>
+                        <option value="COMPLETED">Cerrados (Ya devueltas)</option>
+                    </select>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="bg-slate-50 border-b border-slate-200 text-xs uppercase text-slate-500 font-semibold">
+                                <th class="py-3.5 px-4">Máquina / Proveedor</th>
+                                <th class="py-3.5 px-4">Obra / Ubicación</th>
+                                <th class="py-3.5 px-4">Fecha Entrada</th>
+                                <th class="py-3.5 px-4">Fecha Devolución</th>
+                                <th class="py-3.5 px-4">Coste/Día</th>
+                                <th class="py-3.5 px-4">Días / Coste Total</th>
+                                <th class="py-3.5 px-4">Estado</th>
+                                <th class="py-3.5 px-4 text-right">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rentals-table-body" class="divide-y divide-slate-200 text-sm">
+                            <!-- Se puebla dinámicamente -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECCIÓN 3: AUDITORÍA MENSUAL -->
+        <section id="view-monthly" class="hidden space-y-6">
+            <div class="bg-white p-4 sm:p-6 rounded-xl border border-slate-200 shadow-sm">
+                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+                    <div>
+                        <h2 class="text-lg font-bold text-slate-900">Auditoría Mensual de Permanencia y Gasto</h2>
+                        <p class="text-sm text-slate-500">Comprueba mes a mes qué máquinas de terceros siguen en alquiler activo o ya fueron devueltas.</p>
+                    </div>
+                    <div class="flex items-center gap-2 bg-slate-100 p-1.5 rounded-xl">
+                        <button onclick="changeMonth(-1)" class="p-2 hover:bg-white rounded-lg transition text-slate-600 shadow-sm">
+                            <i data-lucide="chevron-left" class="w-4 h-4"></i>
+                        </button>
+                        <input type="month" id="month-picker" onchange="renderMonthlyView()" class="bg-transparent font-semibold text-sm text-slate-800 px-2 focus:outline-none">
+                        <button onclick="changeMonth(1)" class="p-2 hover:bg-white rounded-lg transition text-slate-600 shadow-sm">
+                            <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Leyenda -->
+                <div class="flex flex-wrap gap-4 mb-4 text-xs font-medium text-slate-600">
+                    <div class="flex items-center gap-1.5">
+                        <span class="w-3 h-3 rounded-sm bg-amber-500 inline-block"></span> En alquiler (Generando coste diario)
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                        <span class="w-3 h-3 rounded-sm bg-emerald-100 border border-emerald-300 inline-block"></span> Devuelta al proveedor / Sin cargo
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                        <span class="w-3 h-3 rounded-sm bg-red-100 border border-red-300 inline-block"></span> Dada de baja
+                    </div>
+                </div>
+
+                <!-- Matriz / Calendario Gantt Mensual -->
+                <div class="overflow-x-auto border border-slate-200 rounded-xl">
+                    <table class="w-full text-left border-collapse" id="monthly-matrix">
+                        <!-- Generado por JS -->
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECCIÓN 4: EMPRESAS ALQUILADORAS (PROVEEDORES) -->
+        <section id="view-providers" class="hidden space-y-6">
+            <div class="bg-white p-4 sm:p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                    <h2 class="text-lg font-bold text-slate-900">Directorio de Empresas de Alquiler</h2>
+                    <p class="text-sm text-slate-500">Gestiona tus proveedores de maquinaria, contactos comerciales y equipos asociados.</p>
+                </div>
+                <button onclick="openModal('modal-provider')" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-lg shadow-sm transition flex items-center gap-2">
+                    <i data-lucide="plus" class="w-4 h-4"></i>
+                    <span>Añadir Empresa de Alquiler</span>
+                </button>
+            </div>
+
+            <div id="providers-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Se puebla dinámicamente -->
+            </div>
+        </section>
+
+        <!-- SECCIÓN 5: OBRAS Y PROYECTOS -->
+        <section id="view-sites" class="hidden space-y-6">
+            <div class="bg-white p-4 sm:p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div>
+                    <h2 class="text-lg font-bold text-slate-900">Catálogo de Obras y Proyectos</h2>
+                    <p class="text-sm text-slate-500">Añade o edita el nombre de tus obras. Al editar el nombre de una obra, se actualizará automáticamente en todos sus alquileres asociados.</p>
+                </div>
+                <button onclick="openSiteModal()" class="bg-amber-500 hover:bg-amber-600 text-slate-950 text-sm font-semibold px-4 py-2 rounded-lg shadow-sm transition flex items-center gap-2">
+                    <i data-lucide="plus" class="w-4 h-4"></i>
+                    <span>Añadir Obra</span>
+                </button>
+            </div>
+
+            <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse text-sm">
+                        <thead>
+                            <tr class="bg-slate-50 border-b border-slate-200 text-xs uppercase text-slate-500 font-semibold">
+                                <th class="py-3.5 px-4">Nombre de la Obra / Proyecto</th>
+                                <th class="py-3.5 px-4">Dirección / Ubicación</th>
+                                <th class="py-3.5 px-4 text-center">Equipos Activos</th>
+                                <th class="py-3.5 px-4 text-right">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="sites-table-body" class="divide-y divide-slate-200">
+                            <!-- Se puebla dinámicamente -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- MODAL: AÑADIR / EDITAR OBRA -->
+    <div id="modal-site" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden">
+            <div class="px-6 py-4 bg-slate-900 text-white flex justify-between items-center">
+                <h3 id="modal-site-title" class="font-bold text-lg flex items-center gap-2">
+                    <i data-lucide="map-pin" class="w-5 h-5 text-amber-400"></i>
+                    <span>Nueva Obra / Proyecto</span>
+                </h3>
+                <button onclick="closeModal('modal-site')" class="text-slate-400 hover:text-white">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <form id="form-site" onsubmit="saveSite(event)" class="p-6 space-y-4">
+                <input type="hidden" id="s-edit-id">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Nombre de la Obra *</label>
+                    <input type="text" id="s-name" required placeholder="Ej: Obra Residencial Las Palmeras" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Dirección / Notas (Opcional)</label>
+                    <input type="text" id="s-address" placeholder="Ej: Av. de la Libertad s/n, Dos Hermanas" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                </div>
+                <div class="flex justify-end gap-2 pt-2">
+                    <button type="button" onclick="closeModal('modal-site')" class="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition">Cancelar</button>
+                    <button type="submit" class="px-5 py-2 text-sm font-semibold bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-lg shadow transition">Guardar Obra</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL: ALTA DE EMPRESA ALQUILADORA (PROVEEDOR) -->
+    <div id="modal-provider" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden">
+            <div class="px-6 py-4 bg-slate-900 text-white flex justify-between items-center">
+                <h3 class="font-bold text-lg flex items-center gap-2">
+                    <i data-lucide="building-2" class="w-5 h-5 text-blue-400"></i>
+                    <span>Nueva Empresa de Alquiler</span>
+                </h3>
+                <button onclick="closeModal('modal-provider')" class="text-slate-400 hover:text-white">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <form id="form-provider" onsubmit="saveProvider(event)" class="p-6 space-y-4">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Nombre Empresa *</label>
+                        <input type="text" id="p-name" required placeholder="Ej: Kiloutou España" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">CIF / NIF</label>
+                        <input type="text" id="p-cif" placeholder="Ej: B12345678" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm uppercase focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Persona de Contacto</label>
+                        <input type="text" id="p-contact" placeholder="Ej: Carlos Mendoza" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Teléfono</label>
+                        <input type="tel" id="p-phone" placeholder="Ej: 954 00 11 22" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Correo Electrónico</label>
+                    <input type="email" id="p-email" placeholder="pedidos@empresa.es" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Condiciones / Notas Comerciales</label>
+                    <textarea id="p-notes" rows="2" placeholder="Ej: Transporte incluido en pedidos superiores a 15 días." class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
+                </div>
+                <div class="flex justify-end gap-2 pt-2">
+                    <button type="button" onclick="closeModal('modal-provider')" class="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition">Cancelar</button>
+                    <button type="submit" class="px-5 py-2 text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow transition">Guardar Empresa</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL 1: ALTA DE MÁQUINA DE PROVEEDOR Y FICHA TÉCNICA -->
+    <div id="modal-machine" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-40 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden animate-fade-in">
+            <div class="px-6 py-4 bg-slate-900 text-white flex justify-between items-center">
+                <h3 id="modal-machine-title" class="font-bold text-lg flex items-center gap-2">
+                    <i data-lucide="wrench" class="w-5 h-5 text-amber-500"></i>
+                    <span>Alta de Equipo de Proveedor</span>
+                </h3>
+                <button onclick="closeModal('modal-machine')" class="text-slate-400 hover:text-white">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <form id="form-machine" onsubmit="saveMachine(event)" class="p-6 space-y-4 max-h-[85vh] overflow-y-auto">
+                <input type="hidden" id="m-edit-original-id">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Nº Identificación / Ref. *</label>
+                        <input type="text" id="m-id" required placeholder="Ej: GAM-402" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none uppercase">
+                    </div>
+                    <div>
+                        <div class="flex justify-between items-center mb-1">
+                            <label class="block text-xs font-semibold text-slate-700 uppercase">Empresa Alquiladora *</label>
+                            <button type="button" onclick="openModal('modal-provider')" class="text-[11px] font-semibold text-blue-600 hover:text-blue-800 flex items-center gap-0.5">
+                                <i data-lucide="plus-circle" class="w-3 h-3"></i> Nueva
+                            </button>
+                        </div>
+                        <select id="m-provider" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                            <!-- Opciones pobladas dinámicamente desde providers -->
+                        </select>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Nombre / Tipo de Máquina *</label>
+                        <input type="text" id="m-name" required placeholder="Ej: Miniexcavadora Oruga" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Coste Diario Pactado (€) *</label>
+                        <input type="number" id="m-rate" required min="1" step="0.01" placeholder="Ej: 135.00" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Marca y Modelo *</label>
+                        <input type="text" id="m-model" required placeholder="Ej: Bobcat E27z" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Nº de Serie / Bastidor</label>
+                        <input type="text" id="m-serial" placeholder="Ej: B4R912844" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                    </div>
+                </div>
+
+                <!-- Ficha de Características Técnicas -->
+                <div class="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-3">
+                    <p class="text-xs font-bold text-slate-700 uppercase flex items-center gap-1.5">
+                        <i data-lucide="file-text" class="w-4 h-4 text-amber-600"></i>
+                        Ficha de Características Técnicas
+                    </p>
+                    <div class="grid grid-cols-3 gap-2">
+                        <div>
+                            <label class="block text-[11px] font-medium text-slate-500">Peso Operativo</label>
+                            <input type="text" id="m-weight" placeholder="2.700 kg" class="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded text-xs">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-medium text-slate-500">Potencia Motor</label>
+                            <input type="text" id="m-power" placeholder="24.8 CV" class="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded text-xs">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-medium text-slate-500">Combustible</label>
+                            <select id="m-fuel" class="w-full px-2 py-1.5 bg-white border border-slate-300 rounded text-xs">
+                                <option value="Diésel">Diésel</option>
+                                <option value="Eléctrica">Eléctrica</option>
+                                <option value="Gasolina">Gasolina</option>
+                                <option value="Híbrida">Híbrida</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-medium text-slate-500">Dimensiones / Accesorios / Condiciones</label>
+                        <textarea id="m-specs" rows="2" placeholder="Incluye cazo de 40cm y 60cm. Seguro incluido en tarifa." class="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded text-xs focus:outline-none focus:ring-1 focus:ring-amber-500"></textarea>
+                    </div>
+                </div>
+
+                <!-- Adjuntos: Fotografías y Documentos PDF -->
+                <div class="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-3">
+                    <p class="text-xs font-bold text-slate-700 uppercase flex items-center gap-1.5">
+                        <i data-lucide="paperclip" class="w-4 h-4 text-blue-600"></i>
+                        Fotografías y Documentación (PDF)
+                    </p>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-[11px] font-medium text-slate-600 mb-1">Fotos del Equipo (Múltiples)</label>
+                            <label class="flex items-center justify-center gap-1.5 w-full px-3 py-2 bg-white border border-dashed border-slate-300 hover:border-amber-500 rounded-lg text-xs text-slate-600 cursor-pointer transition">
+                                <i data-lucide="image-plus" class="w-4 h-4 text-amber-500"></i>
+                                <span>Seleccionar fotos...</span>
+                                <input type="file" id="m-photos" accept="image/*" multiple onchange="handleMachinePhotos(event)" class="hidden">
+                            </label>
+                            <div id="m-photos-preview" class="flex flex-wrap gap-1.5 mt-2"></div>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-medium text-slate-600 mb-1">Documentos PDF (Ficha, Contrato, CE)</label>
+                            <label class="flex items-center justify-center gap-1.5 w-full px-3 py-2 bg-white border border-dashed border-slate-300 hover:border-blue-500 rounded-lg text-xs text-slate-600 cursor-pointer transition">
+                                <i data-lucide="file-up" class="w-4 h-4 text-blue-500"></i>
+                                <span>Subir PDF(s)...</span>
+                                <input type="file" id="m-pdfs" accept="application/pdf" multiple onchange="handleMachinePdfs(event)" class="hidden">
+                            </label>
+                            <div id="m-pdfs-preview" class="space-y-1 mt-2"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Opción de dar entrada inmediata al alquilar -->
+                <div id="m-immediate-rental-box" class="bg-amber-50 p-3.5 rounded-xl border border-amber-200 space-y-3">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" id="m-immediate-rental" onchange="toggleImmediateRentalFields()" class="rounded text-amber-600 focus:ring-amber-500">
+                        <span class="text-xs font-bold text-amber-900">Registrar entrada inmediata en obra (Alquilar desde ya)</span>
+                    </label>
+                    <p class="text-[11px] text-amber-800/80 pl-5">Déjalo desmarcado si solo quieres dar de alta la máquina en tu catálogo para alquilarla más adelante.</p>
+                    <div id="immediate-rental-fields" class="hidden grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                        <div>
+                            <div class="flex justify-between items-center mb-1">
+                                <label class="block text-[11px] font-medium text-amber-900">Obra / Proyecto Destino *</label>
+                                <button type="button" onclick="openSiteModal()" class="text-[10px] font-bold text-amber-800 hover:underline">+ Gestionar</button>
+                            </div>
+                            <div class="relative">
+                                <input type="text" id="m-initial-site" list="sites-datalist" autocomplete="off" placeholder="Selecciona o escribe obra..." class="w-full px-2.5 py-1.5 pr-7 bg-white border border-amber-300 rounded text-xs focus:ring-1 focus:ring-amber-500 focus:outline-none">
+                                <i data-lucide="chevrons-up-down" class="w-3.5 h-3.5 text-amber-700 absolute right-2 top-2 pointer-events-none"></i>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] font-medium text-amber-900 mb-1">Fecha Entrada (Recepción) *</label>
+                            <input type="date" id="m-initial-date" class="w-full px-2.5 py-1.5 bg-white border border-amber-300 rounded text-xs">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex justify-end gap-2 pt-2">
+                    <button type="button" onclick="closeModal('modal-machine')" class="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition">Cancelar</button>
+                    <button type="submit" id="btn-save-machine" class="px-5 py-2 text-sm font-semibold bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-lg shadow transition">Guardar Equipo</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL 2: VER FICHA TÉCNICA COMPLETA -->
+    <div id="modal-specs" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-40 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-2xl w-full shadow-2xl overflow-hidden">
+            <div class="px-6 py-4 bg-slate-900 text-white flex justify-between items-center">
+                <h3 class="font-bold text-lg flex items-center gap-2">
+                    <i data-lucide="file-spreadsheet" class="w-5 h-5 text-amber-500"></i>
+                    <span>Ficha Técnica, Fotos y Documentación</span>
+                </h3>
+                <button onclick="closeModal('modal-specs')" class="text-slate-400 hover:text-white">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div id="specs-content" class="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+                <!-- Rellenado dinámicamente -->
+            </div>
+            <div class="px-6 py-3 bg-slate-50 border-t border-slate-200 flex justify-end">
+                <button onclick="closeModal('modal-specs')" class="px-4 py-2 bg-slate-800 text-white text-sm font-medium rounded-lg hover:bg-slate-700">Cerrar Ficha</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 3: NUEVO ALQUILER (ENTRADA DE MÁQUINA DE PROVEEDOR) -->
+    <div id="modal-rental" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-40 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden">
+            <div class="px-6 py-4 bg-slate-900 text-white flex justify-between items-center">
+                <h3 class="font-bold text-lg flex items-center gap-2">
+                    <i data-lucide="log-in" class="w-5 h-5 text-amber-500"></i>
+                    <span>Registrar Entrada de Maquinaria</span>
+                </h3>
+                <button onclick="closeModal('modal-rental')" class="text-slate-400 hover:text-white">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <form id="form-rental" onsubmit="createRental(event)" class="p-6 space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Seleccionar Equipo Registrado *</label>
+                    <select id="r-machine-id" required onchange="updateRentalRate()" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                        <!-- Opciones dinámicas -->
+                    </select>
+                    <p class="text-[11px] text-slate-400 mt-1">¿Es una máquina nueva? Úsa el botón "Registrar Equipo" arriba.</p>
+                </div>
+
+                <div>
+                    <div class="flex justify-between items-center mb-1">
+                        <label class="block text-xs font-semibold text-slate-700 uppercase">Obra / Proyecto donde trabajará *</label>
+                        <button type="button" onclick="openSiteModal()" class="text-[11px] font-semibold text-amber-600 hover:text-amber-700 flex items-center gap-0.5">
+                            <i data-lucide="plus-circle" class="w-3 h-3"></i> Nueva / Editar Obras
+                        </button>
+                    </div>
+                    <div class="relative">
+                        <input type="text" id="r-site" list="sites-datalist" required autocomplete="off" placeholder="Selecciona de la lista o escribe el nombre de la obra..." class="w-full px-3 py-2 pr-8 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                        <i data-lucide="chevrons-up-down" class="w-4 h-4 text-slate-400 absolute right-2.5 top-2.5 pointer-events-none"></i>
+                    </div>
+                </div>
+
+                <!-- Lista desplegable compartida para Combobox de Obras -->
+                <datalist id="sites-datalist"></datalist>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Fecha de Entrada *</label>
+                        <input type="date" id="r-start-date" required class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Devolución Prevista</label>
+                        <input type="date" id="r-end-date" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                        <span class="text-[10px] text-slate-400">Opcional (si se desconoce)</span>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Coste Diario Acordado (€) *</label>
+                    <input type="number" id="r-rate" required min="1" step="0.01" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                </div>
+
+                <div class="flex justify-end gap-2 pt-3">
+                    <button type="button" onclick="closeModal('modal-rental')" class="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg">Cancelar</button>
+                    <button type="submit" class="px-5 py-2 text-sm font-semibold bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-lg shadow">Confirmar Entrada</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL 4: REGISTRAR DEVOLUCIÓN AL PROVEEDOR (SALIDA) O BAJA -->
+    <div id="modal-confirm-action" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-40 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden p-6 space-y-4">
+            <div class="flex items-center gap-3 text-slate-900">
+                <div id="confirm-icon-bg" class="p-2.5 rounded-full bg-amber-100 text-amber-600">
+                    <i data-lucide="alert-circle" class="w-6 h-6"></i>
+                </div>
+                <h3 id="confirm-title" class="font-bold text-lg">Confirmar Acción</h3>
+            </div>
+            <p id="confirm-message" class="text-sm text-slate-600"></p>
+            
+            <!-- Input para fecha de devolución al proveedor -->
+            <div id="return-date-wrapper" class="hidden bg-slate-50 p-3 rounded-lg border border-slate-200">
+                <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Fecha Real de Devolución al Proveedor *</label>
+                <input type="date" id="actual-return-date" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white">
+                <p id="return-cost-preview" class="text-xs font-semibold text-red-700 mt-2"></p>
+            </div>
+
+            <div class="flex justify-end gap-2 pt-2">
+                <button onclick="closeModal('modal-confirm-action')" class="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-lg">Cancelar</button>
+                <button id="confirm-exec-btn" class="px-4 py-2 text-sm font-semibold bg-slate-900 text-white hover:bg-slate-800 rounded-lg">Confirmar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 5: VISOR INTEGRADO DE IMÁGENES (LIGHTBOX) Y PDF -->
+    <div id="modal-media-viewer" onclick="if(event.target === this) closeModal('modal-media-viewer')" class="fixed inset-0 bg-slate-950/85 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-4xl w-full shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="px-5 py-3.5 bg-slate-950 text-white flex justify-between items-center border-b border-slate-800">
+                <h3 id="media-viewer-title" class="font-semibold text-sm sm:text-base truncate pr-4">Vista Previa</h3>
+                <div class="flex items-center gap-2 shrink-0">
+                    <a id="media-viewer-download" download="archivo" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold rounded-lg flex items-center gap-1.5 transition cursor-pointer">
+                        <i data-lucide="download" class="w-3.5 h-3.5"></i> Descargar
+                    </a>
+                    <button onclick="closeModal('modal-media-viewer')" class="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+            </div>
+            <div id="media-viewer-body" class="p-4 flex items-center justify-center overflow-auto bg-slate-900 min-h-[300px] flex-1">
+                <!-- Contenido dinámico (Imagen o PDF) -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // BASE DE DATOS SQLITE (sql.js + IndexedDB)
+        // ==========================================
+        let db = null;
+        let SQL = null;
+
+        let providers = [];
+        let machines = [];
+        let rentals = [];
+        let sites = [];
+
+        let tempMachinePhotos = [];
+        let tempMachinePdfs = [];
+
+        // Inicialización de IndexedDB para guardar el binario SQLite
+        function openIDB() {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open('MaquiRentSQLiteDB', 1);
+                req.onupgradeneeded = (e) => {
+                    const idb = e.target.result;
+                    if (!idb.objectStoreNames.contains('sqlite_store')) {
+                        idb.createObjectStore('sqlite_store');
+                    }
+                };
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            });
+        }
+
+        async function loadSQLiteBinaryFromIDB() {
+            try {
+                const idb = await openIDB();
+                return new Promise((resolve, reject) => {
+                    const tx = idb.transaction('sqlite_store', 'readonly');
+                    const store = tx.objectStore('sqlite_store');
+                    const req = store.get('database_file');
+                    req.onsuccess = () => resolve(req.result || null);
+                    req.onerror = () => reject(req.error);
+                });
+            } catch (err) {
+                console.warn('Error leyendo IndexedDB:', err);
+                return null;
+            }
+        }
+
+        async function persistSQLiteDatabase() {
+            if (!db) return;
+            try {
+                const binaryArray = db.export();
+                const idb = await openIDB();
+                return new Promise((resolve, reject) => {
+                    const tx = idb.transaction('sqlite_store', 'readwrite');
+                    const store = tx.objectStore('sqlite_store');
+                    const req = store.put(binaryArray, 'database_file');
+                    req.onsuccess = () => resolve();
+                    req.onerror = () => reject(req.error);
+                });
+            } catch (err) {
+                console.error('Error guardando SQLite en IndexedDB:', err);
+                showToast('Error al guardar cambios en SQLite', 'error');
+            }
+        }
+
+        function createTablesIfNotExist() {
+            db.run(`
+                CREATE TABLE IF NOT EXISTS providers (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    cif TEXT,
+                    phone TEXT,
+                    contact TEXT,
+                    email TEXT,
+                    notes TEXT
+                );
+                CREATE TABLE IF NOT EXISTS machines (
+                    id TEXT PRIMARY KEY,
+                    provider TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    serial TEXT,
+                    rate REAL NOT NULL,
+                    status TEXT NOT NULL,
+                    specs TEXT,
+                    photos TEXT,
+                    pdfs TEXT
+                );
+                CREATE TABLE IF NOT EXISTS rentals (
+                    id TEXT PRIMARY KEY,
+                    machineId TEXT NOT NULL,
+                    site TEXT NOT NULL,
+                    startDate TEXT NOT NULL,
+                    endDate TEXT,
+                    rate REAL NOT NULL,
+                    status TEXT NOT NULL,
+                    totalCost REAL
+                );
+                CREATE TABLE IF NOT EXISTS sites (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    address TEXT
+                );
+            `);
+        }
+
+        function loadDataFromSQLite() {
+            if (!db) return;
+
+            providers = [];
+            const pRes = db.exec("SELECT id, name, cif, phone, contact, email, notes FROM providers ORDER BY name ASC");
+            if (pRes.length > 0) {
+                pRes[0].values.forEach(row => {
+                    providers.push({
+                        id: row[0],
+                        name: row[1],
+                        cif: row[2] || '',
+                        phone: row[3] || '',
+                        contact: row[4] || '',
+                        email: row[5] || '',
+                        notes: row[6] || ''
+                    });
+                });
+            }
+
+            machines = [];
+            const mRes = db.exec("SELECT id, provider, name, model, serial, rate, status, specs, photos, pdfs FROM machines ORDER BY id ASC");
+            if (mRes.length > 0) {
+                mRes[0].values.forEach(row => {
+                    machines.push({
+                        id: row[0],
+                        provider: row[1],
+                        name: row[2],
+                        model: row[3],
+                        serial: row[4] || '',
+                        rate: Number(row[5]),
+                        status: row[6],
+                        specs: row[7] ? JSON.parse(row[7]) : { weight: '-', power: '-', fuel: 'Diésel', notes: '' },
+                        photos: row[8] ? JSON.parse(row[8]) : [],
+                        pdfs: row[9] ? JSON.parse(row[9]) : []
+                    });
+                });
+            }
+
+            rentals = [];
+            const rRes = db.exec("SELECT id, machineId, site, startDate, endDate, rate, status, totalCost FROM rentals ORDER BY startDate DESC");
+            if (rRes.length > 0) {
+                rRes[0].values.forEach(row => {
+                    rentals.push({
+                        id: row[0],
+                        machineId: row[1],
+                        site: row[2],
+                        startDate: row[3],
+                        endDate: row[4] || null,
+                        rate: Number(row[5]),
+                        status: row[6],
+                        totalCost: row[7] !== null ? Number(row[7]) : null
+                    });
+                });
+            }
+
+            sites = [];
+            const sRes = db.exec("SELECT id, name, address FROM sites ORDER BY name ASC");
+            if (sRes.length > 0) {
+                sRes[0].values.forEach(row => {
+                    sites.push({
+                        id: row[0],
+                        name: row[1],
+                        address: row[2] || ''
+                    });
+                });
+            }
+        }
+
+        function promptResetDatabase() {
+            document.getElementById('confirm-title').textContent = 'Vaciar Base de Datos';
+            document.getElementById('confirm-message').textContent = '¿Estás seguro de que quieres eliminar todas las empresas, máquinas, alquileres y obras para empezar completamente desde cero? Esta acción no se puede deshacer.';
+            document.getElementById('return-date-wrapper').classList.add('hidden');
+
+            const btn = document.getElementById('confirm-exec-btn');
+            btn.className = "px-4 py-2 text-sm font-semibold bg-red-600 text-white hover:bg-red-700 rounded-lg";
+            btn.textContent = "Sí, Vaciar Todo";
+            btn.onclick = async () => {
+                if (!db) return;
+                db.run("DELETE FROM rentals; DELETE FROM machines; DELETE FROM providers; DELETE FROM sites;");
+                await persistSQLiteDatabase();
+                loadDataFromSQLite();
+                refreshAllUI();
+                closeModal('modal-confirm-action');
+                showToast('Base de datos vaciada. Puedes empezar desde cero.', 'info');
+            };
+
+            openModal('modal-confirm-action');
+        }
+
+        async function initSQLite() {
+            const badge = document.getElementById('db-status-badge');
+            try {
+                SQL = await initSqlJs({
+                    locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${file}`
+                });
+
+                const savedBinary = await loadSQLiteBinaryFromIDB();
+                if (savedBinary) {
+                    db = new SQL.Database(savedBinary);
+                } else {
+                    db = new SQL.Database();
+                }
+
+                createTablesIfNotExist();
+                loadDataFromSQLite();
+                refreshAllUI();
+
+                badge.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400"></span> SQLite Activo (${machines.length} equipos)`;
+                badge.className = "inline-flex items-center gap-1.5 text-[11px] font-medium bg-emerald-950/60 text-emerald-300 px-2.5 py-0.5 rounded-full ml-2 border border-emerald-700/50";
+            } catch (err) {
+                console.error("Error inicializando SQLite:", err);
+                badge.innerHTML = `<span class="w-2 h-2 rounded-full bg-red-500"></span> Error SQLite`;
+                showToast("Error al iniciar motor SQLite: " + err.message, "error");
+            }
+        }
+
+        function exportSQLiteFile() {
+            if (!db) return;
+            const binaryArray = db.export();
+            const blob = new Blob([binaryArray], { type: 'application/x-sqlite3' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            const dateStr = new Date().toISOString().split('T')[0];
+            a.href = url;
+            a.download = `maquirent_bd_${dateStr}.sqlite`;
+            a.click();
+            URL.revokeObjectURL(url);
+            showToast('Base de datos .sqlite exportada correctamente.', 'success');
+        }
+
+        async function importSQLiteFile(event) {
+            const file = event.target.files[0];
+            if (!file || !SQL) return;
+
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                const uInt8Array = new Uint8Array(arrayBuffer);
+                const newDb = new SQL.Database(uInt8Array);
+
+                // Verificar que las tablas existen
+                newDb.exec("SELECT id FROM machines LIMIT 1");
+                db = newDb;
+                createTablesIfNotExist();
+                await persistSQLiteDatabase();
+                loadDataFromSQLite();
+                refreshAllUI();
+                showToast('Base de datos SQLite importada correctamente.', 'success');
+            } catch (err) {
+                console.error(err);
+                showToast('El archivo seleccionado no es una base de datos MaquiRent válida.', 'error');
+            } finally {
+                event.target.value = '';
+            }
+        }
+
+        function refreshAllUI() {
+            populateProviderSelects();
+            populateSitesDatalist();
+            updateKPIs();
+            renderFleet();
+            renderRentals();
+            renderMonthlyView();
+            renderProviders();
+            renderSites();
+            const badge = document.getElementById('db-status-badge');
+            if (badge && db) {
+                badge.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400"></span> SQLite Activo (${machines.length} equipos)`;
+            }
+            lucide.createIcons();
+        }
+
+        // ==========================================
+        // UTILIDADES Y FECHAS
+        // ==========================================
+        function getTodayStr() {
+            return new Date().toISOString().split('T')[0];
+        }
+
+        function getCurrentMonthStr() {
+            const now = new Date();
+            return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        }
+
+        function calculateDaysBetween(startStr, endStr) {
+            const start = new Date(startStr + 'T00:00:00');
+            const end = endStr ? new Date(endStr + 'T00:00:00') : new Date(getTodayStr() + 'T00:00:00');
+            const diffTime = end - start;
+            const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1;
+            return Math.max(1, diffDays);
+        }
+
+        function formatCurrency(amount) {
+            return Number(amount || 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+        }
+
+        function formatDateES(dateStr) {
+            if (!dateStr) return 'En curso';
+            const [y, m, d] = dateStr.split('-');
+            return `${d}/${m}/${y}`;
+        }
+
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            const colors = {
+                success: 'bg-slate-900 text-white border-l-4 border-emerald-500',
+                error: 'bg-red-900 text-white border-l-4 border-red-400',
+                info: 'bg-slate-800 text-white border-l-4 border-amber-500'
+            };
+            toast.className = `${colors[type]} px-4 py-3 rounded-lg shadow-xl text-sm font-medium flex items-center gap-2.5 pointer-events-auto transition-all duration-300`;
+            toast.innerHTML = `<span>${message}</span>`;
+            container.appendChild(toast);
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                setTimeout(() => toast.remove(), 300);
+            }, 3500);
+        }
+
+        // ==========================================
+        // NAVEGACIÓN Y MODALES
+        // ==========================================
+        function switchTab(tabName) {
+            ['fleet', 'rentals', 'monthly', 'providers', 'sites'].forEach(t => {
+                document.getElementById(`view-${t}`).classList.add('hidden');
+                const btn = document.getElementById(`tab-${t}`);
+                btn.classList.remove('border-amber-500', 'text-amber-600', 'font-semibold');
+                btn.classList.add('border-transparent', 'text-slate-500', 'font-medium');
+            });
+
+            document.getElementById(`view-${tabName}`).classList.remove('hidden');
+            const activeBtn = document.getElementById(`tab-${tabName}`);
+            activeBtn.classList.remove('border-transparent', 'text-slate-500', 'font-medium');
+            activeBtn.classList.add('border-amber-500', 'text-amber-600', 'font-semibold');
+
+            if (tabName === 'monthly') renderMonthlyView();
+            if (tabName === 'rentals') renderRentals();
+            if (tabName === 'fleet') renderFleet();
+            if (tabName === 'providers') renderProviders();
+            if (tabName === 'sites') renderSites();
+            lucide.createIcons();
+        }
+
+        function openModal(modalId) {
+            if (modalId === 'modal-rental') {
+                populateAvailableMachinesSelect();
+                document.getElementById('r-start-date').value = getTodayStr();
+            }
+            if (modalId === 'modal-machine') {
+                populateProviderSelects();
+                document.getElementById('form-machine').reset();
+                document.getElementById('m-edit-original-id').value = '';
+                document.getElementById('modal-machine-title').querySelector('span').textContent = 'Alta de Equipo de Proveedor';
+                document.getElementById('btn-save-machine').textContent = 'Guardar Equipo';
+                document.getElementById('m-immediate-rental-box').classList.remove('hidden');
+                tempMachinePhotos = [];
+                tempMachinePdfs = [];
+                renderMachineAttachmentsPreview();
+                document.getElementById('immediate-rental-fields').classList.add('hidden');
+                document.getElementById('m-initial-date').value = getTodayStr();
+            }
+            if (modalId === 'modal-provider') {
+                document.getElementById('form-provider').reset();
+            }
+            const modalEl = document.getElementById(modalId);
+            if (modalEl) {
+                modalEl.classList.remove('hidden');
+            }
+            lucide.createIcons();
+        }
+
+        function closeModal(modalId) {
+            const modalEl = document.getElementById(modalId);
+            if (modalEl) {
+                modalEl.classList.add('hidden');
+            }
+        }
+
+        // ==========================================
+        // GESTIÓN DE ADJUNTOS (FOTOS Y PDFs)
+        // ==========================================
+        function compressImageToDataUrl(file, maxWidth = 1024, quality = 0.78) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        let w = img.width;
+                        let h = img.height;
+                        if (w > maxWidth) {
+                            h = Math.round((h * maxWidth) / w);
+                            w = maxWidth;
+                        }
+                        const canvas = document.createElement('canvas');
+                        canvas.width = w;
+                        canvas.height = h;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, w, h);
+                        resolve(canvas.toDataURL('image/jpeg', quality));
+                    };
+                    img.onerror = reject;
+                    img.src = e.target.result;
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function readFileAsDataUrl(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (e) => resolve(e.target.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async function handleMachinePhotos(event) {
+            const files = Array.from(event.target.files || []);
+            for (const file of files) {
+                try {
+                    const dataUrl = await compressImageToDataUrl(file);
+                    tempMachinePhotos.push({ name: file.name, dataUrl });
+                } catch (err) {
+                    console.error('Error procesando imagen:', err);
+                }
+            }
+            renderMachineAttachmentsPreview();
+            event.target.value = '';
+        }
+
+        async function handleMachinePdfs(event) {
+            const files = Array.from(event.target.files || []);
+            for (const file of files) {
+                try {
+                    const dataUrl = await readFileAsDataUrl(file);
+                    tempMachinePdfs.push({ name: file.name, dataUrl });
+                } catch (err) {
+                    console.error('Error leyendo PDF:', err);
+                }
+            }
+            renderMachineAttachmentsPreview();
+            event.target.value = '';
+        }
+
+        function removeTempPhoto(idx) {
+            tempMachinePhotos.splice(idx, 1);
+            renderMachineAttachmentsPreview();
+        }
+
+        function removeTempPdf(idx) {
+            tempMachinePdfs.splice(idx, 1);
+            renderMachineAttachmentsPreview();
+        }
+
+        function renderMachineAttachmentsPreview() {
+            const photosContainer = document.getElementById('m-photos-preview');
+            const pdfsContainer = document.getElementById('m-pdfs-preview');
+            if (photosContainer) {
+                photosContainer.innerHTML = tempMachinePhotos.map((p, idx) => `
+                    <div class="relative w-12 h-12 rounded-lg overflow-hidden border border-slate-300 group">
+                        <img src="${p.dataUrl}" alt="${p.name}" class="w-full h-full object-cover">
+                        <button type="button" onclick="removeTempPhoto(${idx})" class="absolute inset-0 bg-red-600/80 text-white opacity-0 group-hover:opacity-100 flex items-center justify-center text-xs font-bold transition">✕</button>
+                    </div>
+                `).join('');
+            }
+            if (pdfsContainer) {
+                pdfsContainer.innerHTML = tempMachinePdfs.map((pdf, idx) => `
+                    <div class="flex items-center justify-between bg-white px-2 py-1 rounded border border-slate-200 text-[11px]">
+                        <span class="truncate text-slate-700 pr-2">📄 ${pdf.name}</span>
+                        <button type="button" onclick="removeTempPdf(${idx})" class="text-red-500 hover:text-red-700 font-bold">✕</button>
+                    </div>
+                `).join('');
+            }
+        }
+
+        function openPhotoViewer(machineId, photoIdx) {
+            const m = machines.find(item => item.id === machineId);
+            if (!m || !m.photos || !m.photos[photoIdx]) return;
+            const photo = m.photos[photoIdx];
+
+            document.getElementById('media-viewer-title').textContent = `${m.id} - ${photo.name}`;
+            const dlBtn = document.getElementById('media-viewer-download');
+            dlBtn.href = photo.dataUrl;
+            dlBtn.download = photo.name || `${m.id}_foto.jpg`;
+
+            document.getElementById('media-viewer-body').innerHTML = `
+                <img src="${photo.dataUrl}" alt="${photo.name}" class="max-h-[75vh] max-w-full rounded-lg object-contain shadow-lg">
+            `;
+            openModal('modal-media-viewer');
+            lucide.createIcons();
+        }
+
+        function openPdfDocument(machineId, pdfIdx) {
+            const m = machines.find(item => item.id === machineId);
+            if (!m || !m.pdfs || !m.pdfs[pdfIdx]) return;
+            const pdf = m.pdfs[pdfIdx];
+
+            try {
+                const base64Parts = pdf.dataUrl.split(',');
+                const byteCharacters = atob(base64Parts[1]);
+                const byteNumbers = new Array(byteCharacters.length);
+                for (let i = 0; i < byteCharacters.length; i++) {
+                    byteNumbers[i] = byteCharacters.charCodeAt(i);
+                }
+                const byteArray = new Uint8Array(byteNumbers);
+                const blob = new Blob([byteArray], { type: 'application/pdf' });
+                const blobUrl = URL.createObjectURL(blob);
+
+                document.getElementById('media-viewer-title').textContent = `${m.id} - ${pdf.name}`;
+                const dlBtn = document.getElementById('media-viewer-download');
+                dlBtn.href = blobUrl;
+                dlBtn.download = pdf.name || `${m.id}_documento.pdf`;
+
+                document.getElementById('media-viewer-body').innerHTML = `
+                    <iframe src="${blobUrl}" class="w-full h-[72vh] rounded-lg bg-white border-0"></iframe>
+                `;
+                openModal('modal-media-viewer');
+                lucide.createIcons();
+            } catch (err) {
+                console.error('Error abriendo PDF:', err);
+                showToast('No se pudo previsualizar el PDF.', 'error');
+            }
+        }
+
+        function toggleImmediateRentalFields() {
+            const checked = document.getElementById('m-immediate-rental').checked;
+            const fields = document.getElementById('immediate-rental-fields');
+            if (checked) {
+                fields.classList.remove('hidden');
+                document.getElementById('m-initial-site').required = true;
+                document.getElementById('m-initial-date').required = true;
+            } else {
+                fields.classList.add('hidden');
+                document.getElementById('m-initial-site').required = false;
+                document.getElementById('m-initial-date').required = false;
+            }
+        }
+
+        // ==========================================
+        // GESTIÓN DE OBRAS Y PROYECTOS (COMBOBOX)
+        // ==========================================
+        function populateSitesDatalist() {
+            const datalist = document.getElementById('sites-datalist');
+            if (!datalist) return;
+
+            // Combinar obras del catálogo + obras únicas usadas en alquileres
+            const allSiteNames = new Set(sites.map(s => s.name));
+            rentals.forEach(r => {
+                if (r.site) allSiteNames.add(r.site);
+            });
+
+            datalist.innerHTML = Array.from(allSiteNames)
+                .sort((a, b) => a.localeCompare(b))
+                .map(name => `<option value="${name.replace(/"/g, '&quot;')}"></option>`)
+                .join('');
+        }
+
+        async function ensureSiteExistsInCatalog(siteName) {
+            if (!db || !siteName) return;
+            const trimmed = siteName.trim();
+            if (!trimmed) return;
+            const exists = sites.some(s => s.name.toLowerCase() === trimmed.toLowerCase());
+            if (!exists) {
+                const newId = 'SITE-' + Date.now() + '-' + Math.floor(Math.random() * 100);
+                db.run("INSERT INTO sites (id, name, address) VALUES (?, ?, ?)", [newId, trimmed, '']);
+            }
+        }
+
+        function openSiteModal(siteId = null) {
+            const titleEl = document.getElementById('modal-site-title').querySelector('span');
+            document.getElementById('form-site').reset();
+
+            if (siteId) {
+                const site = sites.find(s => s.id === siteId);
+                if (!site) return;
+                titleEl.textContent = 'Editar Obra / Proyecto';
+                document.getElementById('s-edit-id').value = site.id;
+                document.getElementById('s-name').value = site.name;
+                document.getElementById('s-address').value = site.address || '';
+            } else {
+                titleEl.textContent = 'Nueva Obra / Proyecto';
+                document.getElementById('s-edit-id').value = '';
+            }
+            openModal('modal-site');
+        }
+
+        async function saveSite(e) {
+            e.preventDefault();
+            if (!db) return;
+
+            const editId = document.getElementById('s-edit-id').value;
+            const newName = document.getElementById('s-name').value.trim();
+            const address = document.getElementById('s-address').value.trim();
+
+            if (!newName) return;
+
+            if (editId) {
+                const existing = sites.find(s => s.id === editId);
+                if (existing) {
+                    const oldName = existing.name;
+                    db.run("UPDATE sites SET name = ?, address = ? WHERE id = ?", [newName, address, editId]);
+                    // Actualizar también el texto de la obra en los alquileres vinculados
+                    if (oldName !== newName) {
+                        db.run("UPDATE rentals SET site = ? WHERE site = ?", [newName, oldName]);
+                    }
+                    showToast(`Obra actualizada a "${newName}".`);
+                }
+            } else {
+                if (sites.some(s => s.name.toLowerCase() === newName.toLowerCase())) {
+                    showToast('Esa obra ya está registrada en el catálogo.', 'error');
+                    return;
+                }
+                const newId = 'SITE-' + Date.now();
+                db.run("INSERT INTO sites (id, name, address) VALUES (?, ?, ?)", [newId, newName, address]);
+                showToast(`Obra "${newName}" añadida al catálogo.`);
+            }
+
+            await persistSQLiteDatabase();
+            loadDataFromSQLite();
+            refreshAllUI();
+
+            // Si algún modal de alquiler estaba abierto, rellenar el combobox con la obra guardada
+            const rentalInput = document.getElementById('r-site');
+            if (rentalInput && !document.getElementById('modal-rental').classList.contains('hidden')) {
+                rentalInput.value = newName;
+            }
+            const initSiteInput = document.getElementById('m-initial-site');
+            if (initSiteInput && !document.getElementById('modal-machine').classList.contains('hidden')) {
+                initSiteInput.value = newName;
+            }
+
+            closeModal('modal-site');
+        }
+
+        async function deleteSite(siteId) {
+            if (!db) return;
+            const site = sites.find(s => s.id === siteId);
+            if (!site) return;
+
+            db.run("DELETE FROM sites WHERE id = ?", [siteId]);
+            await persistSQLiteDatabase();
+            loadDataFromSQLite();
+            refreshAllUI();
+            showToast(`Obra "${site.name}" eliminada del catálogo.`, 'info');
+        }
+
+        function renderSites() {
+            const tbody = document.getElementById('sites-table-body');
+            if (!tbody) return;
+
+            if (sites.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="4" class="p-8 text-center text-slate-500">No hay obras registradas. Pulsa "+ Añadir Obra" para crear una.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = sites.map(s => {
+                const activeCount = rentals.filter(r => r.site === s.name && r.status === 'ACTIVE').length;
+                return `
+                    <tr class="hover:bg-slate-50 transition">
+                        <td class="py-3.5 px-4 font-bold text-slate-900 flex items-center gap-2">
+                            <i data-lucide="map-pin" class="w-4 h-4 text-amber-500 shrink-0"></i>
+                            <span>${s.name}</span>
+                        </td>
+                        <td class="py-3.5 px-4 text-slate-600">${s.address || '<span class="text-slate-400 italic">Sin dirección especificada</span>'}</td>
+                        <td class="py-3.5 px-4 text-center">
+                            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold ${activeCount > 0 ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-600'}">
+                                ${activeCount} máquina(s)
+                            </span>
+                        </td>
+                        <td class="py-3.5 px-4 text-right whitespace-nowrap">
+                            <button onclick="openSiteModal('${s.id}')" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold rounded-lg transition mr-1">
+                                Editar Texto
+                            </button>
+                            <button onclick="deleteSite('${s.id}')" title="Eliminar obra" class="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition">
+                                <i data-lucide="trash-2" class="w-4 h-4"></i>
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+            lucide.createIcons();
+        }
+
+        // ==========================================
+        // EMPRESAS ALQUILADORAS (PROVEEDORES)
+        // ==========================================
+        function populateProviderSelects() {
+            const machineSelect = document.getElementById('m-provider');
+            const filterSelect = document.getElementById('filter-provider');
+
+            if (machineSelect) {
+                const currentVal = machineSelect.value;
+                if (providers.length === 0) {
+                    machineSelect.innerHTML = `<option value="">-- Añade primero una empresa --</option>`;
+                } else {
+                    machineSelect.innerHTML = providers.map(p => `<option value="${p.name}">${p.name}</option>`).join('');
+                    if (currentVal && providers.some(p => p.name === currentVal)) {
+                        machineSelect.value = currentVal;
+                    }
+                }
+            }
+
+            if (filterSelect) {
+                const currentFilter = filterSelect.value || 'ALL';
+                filterSelect.innerHTML = `<option value="ALL">Todos los Proveedores</option>` +
+                    providers.map(p => `<option value="${p.name}">${p.name}</option>`).join('');
+                filterSelect.value = currentFilter;
+            }
+        }
+
+        async function saveProvider(e) {
+            e.preventDefault();
+            if (!db) return;
+            const name = document.getElementById('p-name').value.trim();
+            if (!name) return;
+
+            if (providers.some(p => p.name.toLowerCase() === name.toLowerCase())) {
+                showToast('Ya existe una empresa registrada con ese nombre.', 'error');
+                return;
+            }
+
+            const newId = 'PROV-' + Date.now();
+            const cif = document.getElementById('p-cif').value.trim().toUpperCase();
+            const phone = document.getElementById('p-phone').value.trim();
+            const contact = document.getElementById('p-contact').value.trim();
+            const email = document.getElementById('p-email').value.trim();
+            const notes = document.getElementById('p-notes').value.trim();
+
+            db.run(
+                "INSERT INTO providers (id, name, cif, phone, contact, email, notes) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [newId, name, cif, phone, contact, email, notes]
+            );
+            await persistSQLiteDatabase();
+            loadDataFromSQLite();
+            refreshAllUI();
+
+            const machineSelect = document.getElementById('m-provider');
+            if (machineSelect) machineSelect.value = name;
+
+            closeModal('modal-provider');
+            showToast(`Empresa "${name}" guardada en SQLite.`);
+        }
+
+        function openAddMachineForProvider(providerName) {
+            openModal('modal-machine');
+            const select = document.getElementById('m-provider');
+            if (select) select.value = providerName;
+        }
+
+        async function deleteProvider(providerId) {
+            if (!db) return;
+            const prov = providers.find(p => p.id === providerId);
+            if (!prov) return;
+
+            const hasMachines = machines.some(m => m.provider === prov.name);
+            if (hasMachines) {
+                showToast('No puedes eliminar una empresa que tiene equipos asociados.', 'error');
+                return;
+            }
+
+            db.run("DELETE FROM providers WHERE id = ?", [providerId]);
+            await persistSQLiteDatabase();
+            loadDataFromSQLite();
+            refreshAllUI();
+            showToast(`Empresa "${prov.name}" eliminada.`, 'info');
+        }
+
+        function renderProviders() {
+            const grid = document.getElementById('providers-grid');
+            if (!grid) return;
+
+            if (providers.length === 0) {
+                grid.innerHTML = `
+                    <div class="col-span-full bg-white p-12 rounded-xl border border-slate-200 text-center text-slate-500">
+                        <p class="font-medium">No hay empresas de alquiler registradas.</p>
+                        <button onclick="openModal('modal-provider')" class="mt-3 text-sm font-semibold text-blue-600 hover:underline">+ Añadir primera empresa</button>
+                    </div>
+                `;
+                return;
+            }
+
+            grid.innerHTML = providers.map(p => {
+                const provMachines = machines.filter(m => m.provider === p.name);
+                const activeCount = provMachines.filter(m => m.status === 'RENTED').length;
+                const dailySpend = provMachines
+                    .filter(m => m.status === 'RENTED')
+                    .reduce((acc, m) => {
+                        const r = rentals.find(rent => rent.machineId === m.id && rent.status === 'ACTIVE');
+                        return acc + (r ? r.rate : m.rate);
+                    }, 0);
+
+                return `
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition flex flex-col justify-between overflow-hidden">
+                        <div class="p-5">
+                            <div class="flex justify-between items-start gap-2 mb-3">
+                                <div class="flex items-center gap-2.5">
+                                    <div class="p-2.5 bg-blue-50 text-blue-600 rounded-xl">
+                                        <i data-lucide="building-2" class="w-5 h-5"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="font-bold text-slate-900 text-base">${p.name}</h3>
+                                        <p class="text-xs text-slate-400 font-mono">${p.cif || 'Sin CIF registrado'}</p>
+                                    </div>
+                                </div>
+                                <button onclick="deleteProvider('${p.id}')" title="Eliminar proveedor" class="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition">
+                                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+
+                            <div class="space-y-1.5 text-xs text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-100 mb-3">
+                                <p class="flex items-center gap-2"><i data-lucide="user" class="w-3.5 h-3.5 text-slate-400"></i> <span>${p.contact || 'Sin contacto asignado'}</span></p>
+                                <p class="flex items-center gap-2"><i data-lucide="phone" class="w-3.5 h-3.5 text-slate-400"></i> <span>${p.phone || 'Sin teléfono'}</span></p>
+                                <p class="flex items-center gap-2"><i data-lucide="mail" class="w-3.5 h-3.5 text-slate-400"></i> <span>${p.email || 'Sin correo'}</span></p>
+                            </div>
+
+                            ${p.notes ? `<p class="text-xs text-slate-500 italic mb-3">"${p.notes}"</p>` : ''}
+
+                            <div class="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100 text-center">
+                                <div class="bg-amber-50/70 p-2 rounded-lg">
+                                    <span class="block text-[10px] uppercase font-bold text-amber-800">En Alquiler Activo</span>
+                                    <span class="text-base font-bold text-amber-600">${activeCount} <span class="text-xs font-normal text-slate-500">/ ${provMachines.length} eq.</span></span>
+                                </div>
+                                <div class="bg-slate-50 p-2 rounded-lg">
+                                    <span class="block text-[10px] uppercase font-bold text-slate-500">Gasto Diario Actual</span>
+                                    <span class="text-base font-bold text-slate-900">${formatCurrency(dailySpend)}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="px-5 py-3 bg-slate-50 border-t border-slate-200 flex justify-between items-center">
+                            <button onclick="openAddMachineForProvider('${p.name.replace(/'/g, "\\'")}')" class="w-full py-1.5 px-3 bg-white hover:bg-blue-50 text-blue-700 border border-blue-200 text-xs font-semibold rounded-lg transition flex items-center justify-center gap-1.5">
+                                <i data-lucide="plus" class="w-3.5 h-3.5"></i> Añadir Equipo de este Proveedor
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            lucide.createIcons();
+        }
+
+        // ==========================================
+        // GESTIÓN DE EQUIPOS DE PROVEEDORES (SQLITE)
+        // ==========================================
+        function openEditMachine(machineId) {
+            const m = machines.find(item => item.id === machineId);
+            if (!m) return;
+
+            openModal('modal-machine');
+            document.getElementById('m-edit-original-id').value = m.id;
+            document.getElementById('modal-machine-title').querySelector('span').textContent = `Editar Equipo (${m.id})`;
+            document.getElementById('btn-save-machine').textContent = 'Guardar Cambios';
+
+            // Ocultar el bloque de alta inmediata al editar un equipo ya existente
+            document.getElementById('m-immediate-rental-box').classList.add('hidden');
+            document.getElementById('m-immediate-rental').checked = false;
+            toggleImmediateRentalFields();
+
+            document.getElementById('m-id').value = m.id;
+            document.getElementById('m-provider').value = m.provider;
+            document.getElementById('m-name').value = m.name;
+            document.getElementById('m-rate').value = m.rate;
+            document.getElementById('m-model').value = m.model;
+            document.getElementById('m-serial').value = m.serial === 'N/A' ? '' : (m.serial || '');
+
+            document.getElementById('m-weight').value = (m.specs && m.specs.weight !== '-') ? m.specs.weight : '';
+            document.getElementById('m-power').value = (m.specs && m.specs.power !== '-') ? m.specs.power : '';
+            document.getElementById('m-fuel').value = (m.specs && m.specs.fuel) ? m.specs.fuel : 'Diésel';
+            document.getElementById('m-specs').value = (m.specs && m.specs.notes !== 'Sin observaciones.') ? m.specs.notes : '';
+
+            tempMachinePhotos = m.photos ? JSON.parse(JSON.stringify(m.photos)) : [];
+            tempMachinePdfs = m.pdfs ? JSON.parse(JSON.stringify(m.pdfs)) : [];
+            renderMachineAttachmentsPreview();
+        }
+
+        async function saveMachine(e) {
+            e.preventDefault();
+            if (!db) return;
+            const originalId = document.getElementById('m-edit-original-id').value.trim();
+            const id = document.getElementById('m-id').value.trim().toUpperCase();
+            const provider = document.getElementById('m-provider').value.trim();
+
+            if (!provider) {
+                showToast('Debes seleccionar o crear una empresa alquiladora.', 'error');
+                return;
+            }
+            if ((!originalId || originalId !== id) && machines.some(m => m.id === id)) {
+                showToast(`El código de identificación "${id}" ya está registrado.`, 'error');
+                return;
+            }
+
+            const name = document.getElementById('m-name').value.trim();
+            const model = document.getElementById('m-model').value.trim();
+            const serial = document.getElementById('m-serial').value.trim() || 'N/A';
+            const rate = parseFloat(document.getElementById('m-rate').value);
+
+            const specs = {
+                weight: document.getElementById('m-weight').value.trim() || '-',
+                power: document.getElementById('m-power').value.trim() || '-',
+                fuel: document.getElementById('m-fuel').value,
+                notes: document.getElementById('m-specs').value.trim() || 'Sin observaciones.'
+            };
+
+            if (originalId) {
+                db.run(
+                    "UPDATE machines SET id = ?, provider = ?, name = ?, model = ?, serial = ?, rate = ?, specs = ?, photos = ?, pdfs = ? WHERE id = ?",
+                    [
+                        id,
+                        provider,
+                        name,
+                        model,
+                        serial,
+                        rate,
+                        JSON.stringify(specs),
+                        JSON.stringify(tempMachinePhotos),
+                        JSON.stringify(tempMachinePdfs),
+                        originalId
+                    ]
+                );
+
+                // Si cambió el código/matrícula, actualizar también el historial de alquileres
+                if (originalId !== id) {
+                    db.run("UPDATE rentals SET machineId = ? WHERE machineId = ?", [id, originalId]);
+                }
+
+                // Sincronizar tarifa en el alquiler activo si existe
+                db.run("UPDATE rentals SET rate = ? WHERE machineId = ? AND status = 'ACTIVE'", [rate, id]);
+
+                await persistSQLiteDatabase();
+                loadDataFromSQLite();
+                refreshAllUI();
+
+                closeModal('modal-machine');
+                showToast(`Datos del equipo ${id} actualizados correctamente.`);
+                return;
+            }
+
+            const immediate = document.getElementById('m-immediate-rental').checked;
+            const status = immediate ? 'RENTED' : 'AVAILABLE';
+
+            db.run(
+                "INSERT INTO machines (id, provider, name, model, serial, rate, status, specs, photos, pdfs) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    id,
+                    provider,
+                    name,
+                    model,
+                    serial,
+                    rate,
+                    status,
+                    JSON.stringify(specs),
+                    JSON.stringify(tempMachinePhotos),
+                    JSON.stringify(tempMachinePdfs)
+                ]
+            );
+
+            if (immediate) {
+                const rentalId = 'ALQ-' + Date.now();
+                const site = document.getElementById('m-initial-site').value.trim();
+                const startDate = document.getElementById('m-initial-date').value;
+                await ensureSiteExistsInCatalog(site);
+                db.run(
+                    "INSERT INTO rentals (id, machineId, site, startDate, endDate, rate, status, totalCost) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    [rentalId, id, site, startDate, null, rate, 'ACTIVE', null]
+                );
+            }
+
+            await persistSQLiteDatabase();
+            loadDataFromSQLite();
+            refreshAllUI();
+
+            closeModal('modal-machine');
+            showToast(immediate
+                ? `Equipo ${id} (${provider}) registrado y dado de entrada en obra.`
+                : `Equipo ${id} (${provider}) añadido al catálogo listo para alquilar.`);
+        }
+
+        function viewSpecs(machineId) {
+            const m = machines.find(item => item.id === machineId);
+            if (!m) return;
+
+            const activeRental = rentals.find(r => r.machineId === m.id && r.status === 'ACTIVE');
+            const machineHistory = rentals.filter(r => r.machineId === m.id);
+            const photos = m.photos || [];
+            const pdfs = m.pdfs || [];
+
+            const content = document.getElementById('specs-content');
+            content.innerHTML = `
+                <div class="flex items-start justify-between border-b border-slate-100 pb-4">
+                    <div>
+                        <div class="flex items-center gap-2 mb-1">
+                            <span class="text-xs font-bold px-2.5 py-0.5 rounded bg-slate-900 text-amber-400">${m.id}</span>
+                            <span class="text-xs font-semibold px-2.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">${m.provider}</span>
+                        </div>
+                        <h4 class="text-xl font-bold text-slate-900 mt-1">${m.name}</h4>
+                        <p class="text-sm text-slate-500">${m.model} • Serie: <span class="font-mono text-slate-700">${m.serial}</span></p>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-xs text-slate-400 block">Coste Diario</span>
+                        <span class="text-lg font-bold text-slate-900">${formatCurrency(m.rate)}</span>
+                        <button onclick="closeModal('modal-specs'); openEditMachine('${m.id}')" class="mt-1.5 inline-flex items-center gap-1 px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-semibold transition">
+                            <i data-lucide="pencil" class="w-3 h-3"></i> Editar Datos
+                        </button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-3 gap-3 text-center">
+                    <div class="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                        <span class="text-[11px] text-slate-400 uppercase block">Peso</span>
+                        <span class="font-bold text-sm text-slate-800">${m.specs.weight}</span>
+                    </div>
+                    <div class="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                        <span class="text-[11px] text-slate-400 uppercase block">Potencia</span>
+                        <span class="font-bold text-sm text-slate-800">${m.specs.power}</span>
+                    </div>
+                    <div class="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                        <span class="text-[11px] text-slate-400 uppercase block">Energía</span>
+                        <span class="font-bold text-sm text-slate-800">${m.specs.fuel}</span>
+                    </div>
+                </div>
+
+                <div>
+                    <h5 class="text-xs font-bold uppercase text-slate-500 mb-1.5">Accesorios y Condiciones del Alquiler</h5>
+                    <p class="text-sm text-slate-700 bg-slate-50 p-3 rounded-xl border border-slate-200">${m.specs.notes}</p>
+                </div>
+
+                ${photos.length > 0 ? `
+                <div>
+                    <h5 class="text-xs font-bold uppercase text-slate-500 mb-2 flex items-center gap-1.5">
+                        <i data-lucide="images" class="w-3.5 h-3.5 text-amber-600"></i> Galería Fotográfica (${photos.length})
+                    </h5>
+                    <div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                        ${photos.map((photo, idx) => `
+                            <button type="button" onclick="openPhotoViewer('${m.id}', ${idx})" title="Ampliar fotografía" class="block aspect-video rounded-xl overflow-hidden border border-slate-200 hover:ring-2 hover:ring-amber-500 transition bg-slate-100 cursor-pointer">
+                                <img src="${photo.dataUrl}" alt="${photo.name}" class="w-full h-full object-cover">
+                            </button>
+                        `).join('')}
+                    </div>
+                </div>` : ''}
+
+                ${pdfs.length > 0 ? `
+                <div>
+                    <h5 class="text-xs font-bold uppercase text-slate-500 mb-2 flex items-center gap-1.5">
+                        <i data-lucide="file-text" class="w-3.5 h-3.5 text-blue-600"></i> Documentos PDF Adjuntos (${pdfs.length})
+                    </h5>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        ${pdfs.map((pdf, idx) => `
+                            <button type="button" onclick="openPdfDocument('${m.id}', ${idx})" class="flex items-center justify-between p-2.5 bg-blue-50/70 hover:bg-blue-100 border border-blue-200 rounded-xl text-left transition">
+                                <span class="text-xs font-semibold text-blue-900 truncate pr-2">📄 ${pdf.name}</span>
+                                <span class="text-[11px] font-bold text-blue-700 shrink-0">Abrir PDF ↗</span>
+                            </button>
+                        `).join('')}
+                    </div>
+                </div>` : ''}
+
+                ${activeRental ? `
+                    <div class="bg-amber-50 border border-amber-200 p-3.5 rounded-xl flex justify-between items-center">
+                        <div>
+                            <span class="text-xs font-bold text-amber-800 uppercase">Actualmente en Obra (Alquilada)</span>
+                            <p class="text-sm font-semibold text-slate-900">${activeRental.site}</p>
+                            <p class="text-xs text-slate-600">Entrada: ${formatDateES(activeRental.startDate)} (${calculateDaysBetween(activeRental.startDate, null)} días acumulados)</p>
+                        </div>
+                        <button onclick="closeModal('modal-specs'); promptReturnMachine('${activeRental.id}')" class="px-3 py-1.5 bg-slate-900 text-white text-xs font-semibold rounded-lg hover:bg-slate-800">
+                            Devolver a Proveedor
+                        </button>
+                    </div>
+                ` : m.status === 'DECOMMISSIONED' ? `
+                    <div class="bg-red-50 border border-red-200 p-3.5 rounded-xl flex justify-between items-center">
+                        <div>
+                            <span class="text-xs font-bold text-red-800 uppercase">Equipo Dado de Baja</span>
+                            <p class="text-xs text-red-700 mt-0.5">Este equipo está inactivo en el catálogo y no genera costes.</p>
+                        </div>
+                        <button onclick="reactivateMachine('${m.id}'); closeModal('modal-specs');" class="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg shadow-sm transition">
+                            Dar de Alta (Reactivar)
+                        </button>
+                    </div>
+                ` : `
+                    <div class="bg-slate-50 border border-slate-200 p-3.5 rounded-xl flex flex-wrap justify-between items-center gap-2">
+                        <div>
+                            <span class="text-xs font-bold text-slate-700 uppercase">Estado: ${m.status === 'AVAILABLE' ? 'En Catálogo (Disponible)' : 'Devuelta al Proveedor'}</span>
+                            <p class="text-xs text-slate-500 mt-0.5">El equipo no está en obra actualmente.</p>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button onclick="closeModal('modal-specs'); promptDecommission('${m.id}');" class="px-3 py-1.5 bg-white hover:bg-red-50 text-red-600 border border-red-200 text-xs font-semibold rounded-lg transition">
+                                Dar de Baja
+                            </button>
+                            <button onclick="closeModal('modal-specs'); openRentalForMachine('${m.id}');" class="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-semibold rounded-lg shadow-sm transition">
+                                Dar de Alta en Obra (Alquilar)
+                            </button>
+                        </div>
+                    </div>
+                `}
+
+                <div>
+                    <h5 class="text-xs font-bold uppercase text-slate-500 mb-1.5">Historial de Uso con este Equipo (${machineHistory.length})</h5>
+                    <div class="space-y-1.5 max-h-32 overflow-y-auto">
+                        ${machineHistory.length === 0 ? '<p class="text-xs text-slate-400">Sin alquileres previos registrados.</p>' : 
+                        machineHistory.map(h => `
+                            <div class="text-xs flex justify-between items-center p-2 bg-slate-50 rounded border border-slate-100">
+                                <span class="font-medium text-slate-800">${h.site}</span>
+                                <span class="text-slate-500">${formatDateES(h.startDate)} ➔ ${h.endDate ? formatDateES(h.endDate) : 'Activa'}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+            openModal('modal-specs');
+            lucide.createIcons();
+        }
+
+        function promptDecommission(machineId) {
+            const m = machines.find(item => item.id === machineId);
+            if (!m) return;
+
+            if (m.status === 'RENTED') {
+                showToast('No puedes dar de baja una máquina sin devolverla primero al proveedor.', 'error');
+                return;
+            }
+
+            document.getElementById('confirm-title').textContent = `Dar de Baja Equipo ${m.id}`;
+            document.getElementById('confirm-message').textContent = `¿Confirmas dar de baja el registro de "${m.name} (${m.provider})"? Ya no aparecerá disponible para nuevos alquileres.`;
+            document.getElementById('return-date-wrapper').classList.add('hidden');
+
+            const btn = document.getElementById('confirm-exec-btn');
+            btn.className = "px-4 py-2 text-sm font-semibold bg-red-600 text-white hover:bg-red-700 rounded-lg";
+            btn.textContent = "Confirmar Baja";
+            btn.onclick = async () => {
+                if (!db) return;
+                db.run("UPDATE machines SET status = 'DECOMMISSIONED' WHERE id = ?", [machineId]);
+                await persistSQLiteDatabase();
+                loadDataFromSQLite();
+                refreshAllUI();
+                closeModal('modal-confirm-action');
+                showToast(`Equipo ${m.id} dado de baja.`, 'info');
+            };
+
+            openModal('modal-confirm-action');
+        }
+
+        async function reactivateMachine(machineId) {
+            if (!db) return;
+            db.run("UPDATE machines SET status = 'AVAILABLE' WHERE id = ?", [machineId]);
+            await persistSQLiteDatabase();
+            loadDataFromSQLite();
+            refreshAllUI();
+            showToast(`Equipo ${machineId} reactivado en catálogo.`);
+        }
+
+        // ==========================================
+        // GESTIÓN DE ENTRADAS Y DEVOLUCIONES
+        // ==========================================
+        function populateAvailableMachinesSelect() {
+            const select = document.getElementById('r-machine-id');
+            const available = machines.filter(m => m.status === 'AVAILABLE' || m.status === 'RETURNED');
+            
+            if (available.length === 0) {
+                select.innerHTML = `<option value="">No hay equipos disponibles en catálogo (Registra uno nuevo)</option>`;
+                return;
+            }
+
+            select.innerHTML = available.map(m => {
+                const tag = m.status === 'AVAILABLE' ? 'Nuevo en catálogo' : 'Devuelto anteriormente';
+                return `<option value="${m.id}" data-rate="${m.rate}">${m.id} - ${m.name} [${m.provider}] (${tag} • ${formatCurrency(m.rate)}/día)</option>`;
+            }).join('');
+            updateRentalRate();
+        }
+
+        function openRentalForMachine(machineId) {
+            openModal('modal-rental');
+            const select = document.getElementById('r-machine-id');
+            select.value = machineId;
+            updateRentalRate();
+        }
+
+        function updateRentalRate() {
+            const select = document.getElementById('r-machine-id');
+            const selectedOption = select.options[select.selectedIndex];
+            if (selectedOption && selectedOption.dataset.rate) {
+                document.getElementById('r-rate').value = selectedOption.dataset.rate;
+            }
+        }
+
+        async function createRental(e) {
+            e.preventDefault();
+            if (!db) return;
+            const machineId = document.getElementById('r-machine-id').value;
+            if (!machineId) {
+                showToast('Selecciona un equipo válido para alquilar.', 'error');
+                return;
+            }
+
+            const rentalId = 'ALQ-' + Date.now();
+            const site = document.getElementById('r-site').value.trim();
+            const startDate = document.getElementById('r-start-date').value;
+            const endDate = document.getElementById('r-end-date').value || null;
+            const rate = parseFloat(document.getElementById('r-rate').value);
+
+            await ensureSiteExistsInCatalog(site);
+
+            db.run(
+                "INSERT INTO rentals (id, machineId, site, startDate, endDate, rate, status, totalCost) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [rentalId, machineId, site, startDate, endDate, rate, 'ACTIVE', null]
+            );
+            db.run("UPDATE machines SET status = 'RENTED' WHERE id = ?", [machineId]);
+
+            await persistSQLiteDatabase();
+            loadDataFromSQLite();
+            refreshAllUI();
+
+            closeModal('modal-rental');
+            document.getElementById('form-rental').reset();
+            showToast(`Entrada registrada: ${machineId} activa en "${site}".`);
+        }
+
+        function promptReturnMachine(rentalId) {
+            const rental = rentals.find(r => r.id === rentalId);
+            if (!rental) return;
+            const machine = machines.find(m => m.id === rental.machineId);
+
+            document.getElementById('confirm-title').textContent = `Devolver Equipo ${machine.id} al Proveedor`;
+            document.getElementById('confirm-message').textContent = `Se cerrará el alquiler con ${machine.provider} para la obra "${rental.site}" (Entrada: ${formatDateES(rental.startDate)}).`;
+            
+            const dateWrapper = document.getElementById('return-date-wrapper');
+            dateWrapper.classList.remove('hidden');
+            
+            const dateInput = document.getElementById('actual-return-date');
+            dateInput.value = getTodayStr();
+            dateInput.min = rental.startDate;
+
+            const updatePreview = () => {
+                const days = calculateDaysBetween(rental.startDate, dateInput.value);
+                const total = days * rental.rate;
+                document.getElementById('return-cost-preview').textContent = `Total a pagar al proveedor: ${days} día(s) × ${formatCurrency(rental.rate)} = ${formatCurrency(total)}`;
+            };
+            dateInput.oninput = updatePreview;
+            updatePreview();
+
+            const btn = document.getElementById('confirm-exec-btn');
+            btn.className = "px-4 py-2 text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 rounded-lg";
+            btn.textContent = "Confirmar Devolución";
+            btn.onclick = async () => {
+                if (!db) return;
+                const returnDate = dateInput.value;
+                if (!returnDate) {
+                    showToast('Indica una fecha de devolución válida.', 'error');
+                    return;
+                }
+                const days = calculateDaysBetween(rental.startDate, returnDate);
+                const totalCost = days * rental.rate;
+
+                db.run(
+                    "UPDATE rentals SET endDate = ?, status = 'COMPLETED', totalCost = ? WHERE id = ?",
+                    [returnDate, totalCost, rentalId]
+                );
+                db.run("UPDATE machines SET status = 'RETURNED' WHERE id = ?", [rental.machineId]);
+
+                await persistSQLiteDatabase();
+                loadDataFromSQLite();
+                refreshAllUI();
+                closeModal('modal-confirm-action');
+                showToast(`Equipo ${machine.id} devuelto a ${machine.provider}. Gasto cerrado: ${formatCurrency(totalCost)}`);
+            };
+
+            openModal('modal-confirm-action');
+        }
+
+        // ==========================================
+        // RENDERIZADO DE INTERFAZ Y KPIS
+        // ==========================================
+        function updateKPIs() {
+            const rented = machines.filter(m => m.status === 'RENTED').length;
+            const returned = machines.filter(m => m.status === 'RETURNED').length;
+
+            const dailySpend = rentals
+                .filter(r => r.status === 'ACTIVE')
+                .reduce((sum, r) => sum + r.rate, 0);
+
+            document.getElementById('kpi-rented').textContent = rented;
+            document.getElementById('kpi-providers').textContent = providers.length;
+            document.getElementById('kpi-returned').textContent = returned;
+            document.getElementById('kpi-cost').textContent = formatCurrency(dailySpend);
+        }
+
+        function renderFleet() {
+            const tbody = document.getElementById('fleet-grid');
+            const search = document.getElementById('search-machine').value.toLowerCase();
+            const providerFilter = document.getElementById('filter-provider').value;
+            const statusFilter = document.getElementById('filter-status').value;
+
+            const filtered = machines.filter(m => {
+                const matchesSearch = m.id.toLowerCase().includes(search) ||
+                                      m.name.toLowerCase().includes(search) ||
+                                      m.model.toLowerCase().includes(search) ||
+                                      m.provider.toLowerCase().includes(search);
+                const matchesProvider = providerFilter === 'ALL' || m.provider === providerFilter;
+                const matchesStatus = statusFilter === 'ALL' || m.status === statusFilter;
+                return matchesSearch && matchesProvider && matchesStatus;
+            });
+
+            if (filtered.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="10" class="p-10 text-center text-slate-500">
+                            <p class="font-medium text-sm">No se encontraron equipos con los filtros aplicados.</p>
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+
+            tbody.innerHTML = filtered.map((m, idx) => {
+                const activeRental = rentals.find(r => r.machineId === m.id && r.status === 'ACTIVE');
+                const currentRate = activeRental ? activeRental.rate : m.rate;
+
+                let statusBadge = '';
+                if (m.status === 'RENTED') {
+                    statusBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-200 whitespace-nowrap"><span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span> En Alquiler</span>`;
+                } else if (m.status === 'AVAILABLE') {
+                    statusBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200 whitespace-nowrap"><span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span> En Catálogo</span>`;
+                } else if (m.status === 'RETURNED') {
+                    statusBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200 whitespace-nowrap"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Devuelta</span>`;
+                } else {
+                    statusBadge = `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-200 text-slate-600 whitespace-nowrap">Baja</span>`;
+                }
+
+                const rowBg = idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/70';
+
+                return `
+                    <tr class="${rowBg} hover:bg-amber-50/60 transition-colors">
+                        <!-- Matrícula / ID -->
+                        <td class="py-2.5 px-3 border-r border-slate-200 font-mono font-bold text-slate-900 whitespace-nowrap">
+                            <span class="px-2 py-0.5 rounded bg-slate-900 text-amber-400 text-xs">${m.id}</span>
+                        </td>
+
+                        <!-- Empresa de Alquiler -->
+                        <td class="py-2.5 px-3 border-r border-slate-200 whitespace-nowrap">
+                            <span class="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                                <i data-lucide="building-2" class="w-3 h-3"></i> ${m.provider}
+                            </span>
+                        </td>
+
+                        <!-- Maquinaria / Modelo -->
+                        <td class="py-2.5 px-3 border-r border-slate-200">
+                            <div class="font-semibold text-slate-900 leading-tight">${m.name}</div>
+                            <div class="text-[11px] text-slate-500">${m.model}</div>
+                        </td>
+
+                        <!-- Nº Serie -->
+                        <td class="py-2.5 px-3 border-r border-slate-200 font-mono text-xs text-slate-600 whitespace-nowrap">
+                            ${m.serial || '-'}
+                        </td>
+
+                        <!-- Ficha Técnica resumida -->
+                        <td class="py-2.5 px-3 border-r border-slate-200 text-xs text-slate-600 whitespace-nowrap">
+                            <span title="Peso">${m.specs.weight}</span> • 
+                            <span title="Potencia">${m.specs.power}</span> • 
+                            <span class="font-medium text-slate-700">${m.specs.fuel}</span>
+                        </td>
+
+                        <!-- Obra Actual / Fecha Entrada -->
+                        <td class="py-2.5 px-3 border-r border-slate-200 text-xs">
+                            ${activeRental ? `
+                                <div class="font-semibold text-amber-900 truncate max-w-[190px]" title="${activeRental.site}">${activeRental.site}</div>
+                                <div class="text-[11px] text-amber-700">Desde ${formatDateES(activeRental.startDate)} (${calculateDaysBetween(activeRental.startDate, null)}d)</div>
+                            ` : `<span class="text-slate-400 italic">— Sin asignar —</span>`}
+                        </td>
+
+                        <!-- Coste Diario -->
+                        <td class="py-2.5 px-3 border-r border-slate-200 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
+                            ${formatCurrency(currentRate)}
+                        </td>
+
+                        <!-- Fotos y PDFs (Vista previa y acceso directo) -->
+                        <td class="py-2.5 px-3 border-r border-slate-200">
+                            <div class="flex flex-wrap items-center gap-1.5 min-w-[140px]">
+                                ${(m.photos && m.photos.length > 0) ? m.photos.slice(0, 3).map((photo, pIdx) => `
+                                    <button type="button" onclick="openPhotoViewer('${m.id}', ${pIdx})" title="Ampliar foto: ${photo.name}" class="w-8 h-8 rounded border border-slate-300 overflow-hidden hover:ring-2 hover:ring-amber-500 transition shrink-0 block bg-slate-100 cursor-pointer">
+                                        <img src="${photo.dataUrl}" alt="${photo.name}" class="w-full h-full object-cover">
+                                    </button>
+                                `).join('') : ''}
+                                ${(m.photos && m.photos.length > 3) ? `
+                                    <button type="button" onclick="viewSpecs('${m.id}')" class="w-7 h-8 rounded bg-slate-100 hover:bg-slate-200 border border-slate-300 text-[10px] font-bold text-slate-700 flex items-center justify-center shrink-0" title="Ver todas las fotos">
+                                        +${m.photos.length - 3}
+                                    </button>
+                                ` : ''}
+                                ${(m.pdfs && m.pdfs.length > 0) ? m.pdfs.map((pdf, pdfIdx) => `
+                                    <button type="button" onclick="openPdfDocument('${m.id}', ${pdfIdx})" title="Abrir PDF: ${pdf.name}" class="inline-flex items-center gap-1 px-2 py-1 rounded bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-[11px] font-semibold transition max-w-[110px]">
+                                        <i data-lucide="file-text" class="w-3 h-3 shrink-0"></i>
+                                        <span class="truncate">${pdf.name}</span>
+                                    </button>
+                                `).join('') : ''}
+                                ${((!m.photos || m.photos.length === 0) && (!m.pdfs || m.pdfs.length === 0)) ? `
+                                    <span class="text-[11px] text-slate-400 italic">Sin archivos</span>
+                                ` : ''}
+                            </div>
+                        </td>
+
+                        <!-- Estado -->
+                        <td class="py-2.5 px-3 border-r border-slate-200 text-center whitespace-nowrap">
+                            ${statusBadge}
+                        </td>
+
+                        <!-- Acciones -->
+                        <td class="py-2.5 px-3 text-right whitespace-nowrap">
+                            <div class="inline-flex items-center gap-1">
+                                <button onclick="openEditMachine('${m.id}')" title="Editar datos del equipo" class="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold rounded border border-blue-200 transition inline-flex items-center gap-1">
+                                    <i data-lucide="pencil" class="w-3 h-3"></i> Editar
+                                </button>
+                                <button onclick="viewSpecs('${m.id}')" title="Ver Ficha Técnica" class="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium rounded border border-slate-200 transition">
+                                    Ficha
+                                </button>
+                                ${m.status === 'RENTED' ? `
+                                    <button onclick="promptReturnMachine('${activeRental.id}')" class="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded transition">
+                                        Devolver
+                                    </button>
+                                ` : (m.status === 'AVAILABLE' || m.status === 'RETURNED') ? `
+                                    <button onclick="openRentalForMachine('${m.id}')" class="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-semibold rounded transition">
+                                        Alquilar
+                                    </button>
+                                    <button onclick="promptDecommission('${m.id}')" title="Dar de baja" class="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition">
+                                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                                    </button>
+                                ` : `
+                                    <button onclick="reactivateMachine('${m.id}')" class="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium rounded transition">
+                                        Reactivar
+                                    </button>
+                                `}
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+            lucide.createIcons();
+        }
+
+        function renderRentals() {
+            const tbody = document.getElementById('rentals-table-body');
+            const filter = document.getElementById('filter-rental-status').value;
+
+            const filtered = rentals
+                .filter(r => filter === 'ALL' || r.status === filter)
+                .sort((a, b) => new Date(b.startDate) - new Date(a.startDate));
+
+            if (filtered.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="8" class="p-8 text-center text-slate-500">No hay registros de entrada/devolución en esta vista.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = filtered.map(r => {
+                const m = machines.find(item => item.id === r.machineId) || { name: 'Equipo eliminado', provider: '-', id: r.machineId };
+                const days = calculateDaysBetween(r.startDate, r.endDate);
+                const cost = r.status === 'COMPLETED' && r.totalCost !== null ? r.totalCost : (days * r.rate);
+
+                return `
+                    <tr class="hover:bg-slate-50 transition">
+                        <td class="py-3.5 px-4">
+                            <span class="font-bold text-slate-900">${m.id}</span> - <span class="text-slate-700">${m.name}</span>
+                            <span class="block text-xs font-medium text-blue-600">${m.provider}</span>
+                        </td>
+                        <td class="py-3.5 px-4 font-medium text-slate-800">${r.site}</td>
+                        <td class="py-3.5 px-4 text-slate-600">${formatDateES(r.startDate)}</td>
+                        <td class="py-3.5 px-4 text-slate-600">
+                            ${r.endDate ? formatDateES(r.endDate) : '<span class="text-amber-600 font-medium">En obra (Abierto)</span>'}
+                        </td>
+                        <td class="py-3.5 px-4 text-slate-700 font-medium">${formatCurrency(r.rate)}</td>
+                        <td class="py-3.5 px-4">
+                            <span class="font-bold text-slate-900">${formatCurrency(cost)}</span>
+                            <span class="text-xs text-slate-400 block">(${days} días)</span>
+                        </td>
+                        <td class="py-3.5 px-4">
+                            ${r.status === 'ACTIVE' 
+                                ? '<span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">En Alquiler</span>'
+                                : '<span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">Devuelta</span>'}
+                        </td>
+                        <td class="py-3.5 px-4 text-right">
+                            ${r.status === 'ACTIVE' 
+                                ? `<button onclick="promptReturnMachine('${r.id}')" class="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg transition">Devolver</button>`
+                                : `<span class="text-xs text-slate-400">Cerrado</span>`}
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        // ==========================================
+        // AUDITORÍA MENSUAL
+        // ==========================================
+        function changeMonth(delta) {
+            const picker = document.getElementById('month-picker');
+            const [year, month] = picker.value.split('-').map(Number);
+            const date = new Date(year, month - 1 + delta, 1);
+            picker.value = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+            renderMonthlyView();
+        }
+
+        function renderMonthlyView() {
+            const picker = document.getElementById('month-picker');
+            if (!picker.value) picker.value = getCurrentMonthStr();
+
+            const [year, month] = picker.value.split('-').map(Number);
+            const daysInMonth = new Date(year, month, 0).getDate();
+            const table = document.getElementById('monthly-matrix');
+
+            let headerHtml = `
+                <thead>
+                    <tr class="bg-slate-100 border-b border-slate-200 text-[11px] font-bold text-slate-600">
+                        <th class="py-3 px-3 sticky left-0 bg-slate-100 z-10 min-w-[210px] border-r border-slate-200">Equipo / Proveedor</th>
+            `;
+            for (let d = 1; d <= daysInMonth; d++) {
+                headerHtml += `<th class="py-2 px-1 text-center min-w-[26px] border-r border-slate-200/60">${d}</th>`;
+            }
+            headerHtml += `<th class="py-3 px-3 text-right min-w-[115px] bg-slate-100">Gasto Mes</th></tr></thead>`;
+
+            let bodyHtml = `<tbody class="divide-y divide-slate-200 text-xs">`;
+
+            machines.forEach(m => {
+                let rentedDaysInMonth = 0;
+                let monthCost = 0;
+                let cellsHtml = '';
+
+                for (let d = 1; d <= daysInMonth; d++) {
+                    const currentDayStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+                    
+                    const activeOnDay = rentals.find(r => {
+                        if (r.machineId !== m.id) return false;
+                        const started = r.startDate <= currentDayStr;
+                        const notEnded = !r.endDate || r.endDate >= currentDayStr;
+                        return started && notEnded;
+                    });
+
+                    if (activeOnDay) {
+                        rentedDaysInMonth++;
+                        monthCost += activeOnDay.rate;
+                        cellsHtml += `<td class="p-0.5 border-r border-slate-200/60 bg-amber-500/90" title="${m.id} (${m.provider}) - Obra: ${activeOnDay.site} (${formatCurrency(activeOnDay.rate)}/día)"></td>`;
+                    } else if (m.status === 'DECOMMISSIONED') {
+                        cellsHtml += `<td class="p-0.5 border-r border-slate-200/60 bg-red-50"></td>`;
+                    } else {
+                        cellsHtml += `<td class="p-0.5 border-r border-slate-200/60 bg-emerald-50/40"></td>`;
+                    }
+                }
+
+                const statusDot = m.status === 'RENTED' 
+                    ? '<span class="w-2 h-2 rounded-full bg-amber-500 inline-block" title="Alquilada actualmente"></span>'
+                    : (m.status === 'AVAILABLE'
+                        ? '<span class="w-2 h-2 rounded-full bg-blue-500 inline-block" title="En catálogo (Sin alquilar aún)"></span>'
+                        : (m.status === 'RETURNED' 
+                            ? '<span class="w-2 h-2 rounded-full bg-emerald-500 inline-block" title="Devuelta al proveedor"></span>'
+                            : '<span class="w-2 h-2 rounded-full bg-red-500 inline-block" title="Baja"></span>'));
+
+                bodyHtml += `
+                    <tr class="hover:bg-slate-50 group">
+                        <td onclick="viewSpecs('${m.id}')" title="Clic para ver ficha completa, dar de alta o baja" class="py-2.5 px-3 sticky left-0 bg-white group-hover:bg-amber-50/70 z-10 border-r border-slate-200 font-medium cursor-pointer transition-colors">
+                            <div class="flex items-center justify-between gap-1.5">
+                                <div class="flex items-center gap-1.5 min-w-0">
+                                    ${statusDot}
+                                    <span class="font-bold text-slate-900 group-hover:text-amber-700 underline decoration-slate-300 group-hover:decoration-amber-500 underline-offset-2">${m.id}</span>
+                                    <span class="text-blue-600 text-[11px] font-semibold truncate max-w-[105px]">(${m.provider})</span>
+                                </div>
+                                <i data-lucide="external-link" class="w-3 h-3 text-slate-400 group-hover:text-amber-600 shrink-0"></i>
+                            </div>
+                            <div class="text-[11px] text-slate-500 truncate max-w-[190px]">${m.name}</div>
+                        </td>
+                        ${cellsHtml}
+                        <td class="py-2.5 px-3 text-right font-semibold ${rentedDaysInMonth > 0 ? 'text-red-700 bg-red-50/30' : 'text-slate-400'}">
+                            ${rentedDaysInMonth > 0 ? `${formatCurrency(monthCost)} <span class="block text-[10px] font-normal text-slate-500">${rentedDaysInMonth} días</span>` : '0,00 €'}
+                        </td>
+                    </tr>
+                `;
+            });
+
+            bodyHtml += `</tbody>`;
+            table.innerHTML = headerHtml + bodyHtml;
+            lucide.createIcons();
+        }
+
+        // ==========================================
+        // INICIALIZACIÓN
+        // ==========================================
+        window.onload = function() {
+            document.getElementById('month-picker').value = getCurrentMonthStr();
+            lucide.createIcons();
+            initSQLite();
+        };
+    </script>
+</body>
+</html>
